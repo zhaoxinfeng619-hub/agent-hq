@@ -54,6 +54,64 @@ npm run build      # 产物 dist/index.html，约 757KB，three.js 已内联
 | `?q=0\|1\|2` | 锁死画质档位（0 无泛光无阴影 / 1 无泛光 / 2 全开），验收截图用 |
 | `?noshadow=1` | 只关阴影、保留泛光，排查阴影瑕疵用 |
 | `?cam=theta,phi,radius,tx,ty,tz` | 直接落到指定机位（跳过缓动），无头截图取特写用 |
+| `?live=1` | **接真实数据**：连 `http://127.0.0.1:8787/events`（见下一节） |
+| `?live=http://host:port` | 连指定 bridge |
+| `?liveFallback=poll` | 用轮询代替 SSE（代理/防火墙挡住 EventSource 时） |
+
+## 真实接入：让大屏跑真 agent
+
+默认是内置演出（顶栏显示 `MOCK`）。接真实事件流后顶栏变 `LIVE`，并且：
+
+- **48 个工位是座位池**，不是写死的 48 个 agent。外部 agent 第一次出现时绑一个空座位，同一个 id 永远回到同一张桌子；
+- **live 模式下没被占用的座位不放人**——大屏上出现的每个身影都对应一个真实 agent；
+- **父 → 子 协作关系画成流动光点**（`subagent.spawn` 事件触发），从父 agent 的桌子拱到子 agent 的桌子；人走去开会时光点会跟着拐进会议室；
+- 进度、工具、异常、会议里的一切都由事件驱动，`world.ts` 不再自己掷骰子。
+
+### 一分钟跑起来
+
+```bash
+npm run bridge        # 内置多 agent 编排演示：1 个 orchestrator 派 4 个子 agent，中途开一次会、翻一次车
+# 另开一个窗口，打开 Agent-HQ-智能总部.html?live=1
+```
+
+或者接你自己的日志（每行一个 JSON）：
+
+```bash
+npm run bridge:file -- ./run.jsonl
+# 也可以直接喂一条，验证通路
+curl -X POST http://127.0.0.1:8787/emit -d '{"type":"agent.start","agent":"my-agent","dept":"eng","task":"hello"}'
+```
+
+### 事件契约
+
+一条事件一行 JSON，`type` 必填；`agent` 是外部 id（字符串，1~40 字符都行）；`dept` 建议带上，决定坐哪个房间（`product/design/eng/market/ops/hr/fin/cs/data/strat/director`）。
+
+| type | 必填 | 作用 |
+| --- | --- | --- |
+| `agent.start` | `agent`, `task` | 坐到自己座位、屏幕亮起、开始一个任务 |
+| `tool` | `agent`, `tool` | 记一次工具调用（任务表里的 tool 列、底部流水） |
+| `progress` | `agent`, `p` | 进度 0..1（live 模式进度只认这个） |
+| `agent.done` | `agent`, 可选 `tokens` | 交付，计入完成数 / 平均耗时 / token |
+| `agent.error` | `agent`, `msg` | 变红告警，等外部再发 `agent.start` 恢复（不自动重试） |
+| `agent.idle` | `agent` | 回待命（人还在座位上） |
+| `subagent.spawn` | `agent`, `parent` | 建立父子关系 → 场景里出现一条流动光点弧线 |
+| `meeting.start` | `agents[]`, `topic`, `ms` | 这些人离座走进会议室开会，`ms` 后自动散会 |
+| `meeting.end` | — | 提前散会 |
+| `reset` | — | 回到 MOCK 演出 |
+
+传输层：`GET /events`（SSE，推荐）+ 断线重连由 EventSource 负责；连接时 bridge 会补发最近 90 条事件，所以**中途打开大屏也能还原出当前谁在干活、谁派了谁**。`GET /events.json?since=<n>` 是轮询版。
+
+### 接 Claude Code / Codex 这类 runtime
+
+它们本质都在吐结构化日志，写个 ~50 行的适配器把它们映射成上面的契约即可，`world.ts` 和场景层零改动：
+
+1. 读 runtime 的 session 日志（Claude Code 的 `~/.claude/projects/*/*.jsonl`、Codex 的 rollout JSONL），`tail -f` 式逐行读；
+2. 每条原始记录映射成一条事件 —— 一次 `Task`/tool_use 开始 → `agent.start`，`tool_use` 结束 → `tool`，子 agent 被派生 → `subagent.spawn`（`parent` 填父会话 id），任务结束 → `agent.done`；
+3. 一行一行 `POST /emit` 或直接写 JSONL 后 `npm run bridge:file -- that.jsonl`。
+
+多 agent 编排框架（LangGraph / CrewAI / 自研 orchestrator）同理：手里有"谁派了谁、谁在调什么工具"，就有东西可画。
+
+> 说明一下这个项目本身：它是我单线程顺序做出来的，没有用多 agent 并行（每步都依赖上一步的构建结果，并行收益为负）。所以大屏里跑的始终是 mock 或 bridge 的演示流，不是我的执行过程。想让它显示真实的多 agent 执行，接上 bridge 就是。
 
 ## 结构
 
@@ -64,13 +122,18 @@ src/
 │  ├─ geom.ts           # 自研几何合并器 mergeParts() + 家具搭建 DSL(Kit)
 │  └─ textures.ts       # 全部程序化 Canvas 贴图 + 环境探针（带缓存）
 ├─ data/
-│  ├─ types.ts          # 数据契约（Agent / Task / Ev / Meeting）
+│  ├─ types.ts          # 数据契约（Agent / Task / Ev / Meeting / LiveEvent）
 │  ├─ layout.ts         # 楼层几何、工位排布、会议席位（纯函数）
-│  └─ world.ts          # Mock 世界引擎：任务推进、混沌注入、会议编排、统计
+│  ├─ world.ts          # 世界引擎：mock 演出 + live 事件应用（座位池 / 父子关系 / 回收）
+│  └─ live.ts           # 真实接入客户端：SSE / 轮询 → world.applyEvent
 ├─ store/useHQ.ts       # zustand：世界 → UI 的节流快照 + 交互状态
 ├─ components/          # Stage / TopBar / LeftPanel / TaskTable / Ticker / Drawer
 └─ styles/ui.css        # 设计 token + 全部样式
+
+server/bridge.mjs        # 本地 bridge：SSE + JSONL 跟读 + 内置多 agent 演示
 ```
+
+控制台里还有两个调试句柄：`__hq.world`（世界状态，可直接 `applyEvent` 试事件）、`__hqScene`（three.js 场景）。
 
 关键约定：**3D 场景只读 `world` 的可变对象，每帧渲染；React 只以 ~2.4fps 拿快照**。
 所以数据刷新频率不影响画面帧率，接真实数据源时只换 `world` 的事件来源，场景代码零改动。

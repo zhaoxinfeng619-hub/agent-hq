@@ -13,6 +13,8 @@ export default function TopBar() {
   const setFilter = useHQ((s) => s.setFilter)
   const roam = useHQ((s) => s.roam)
   const setRoam = useHQ((s) => s.setRoam)
+  const mode = useHQ((s) => s.snap.mode)
+  const link = useHQ((s) => s.snap.link)
   const [now, setNow] = useState(() => new Date())
 
   useEffect(() => {
@@ -46,9 +48,9 @@ export default function TopBar() {
       </nav>
 
       <div className="top-right">
-        <div className="conn">
+        <div className={`conn ${mode === 'mock' ? 'mock' : link === 'on' ? '' : 'warn'}`}>
           <i />
-          LIVE
+          {mode === 'mock' ? 'MOCK' : link === 'on' ? 'LIVE' : link === 'lost' ? 'LIVE · 断' : 'LIVE · 连'}
         </div>
         <div className="clock">
           {hh}:{mm}:{ss}

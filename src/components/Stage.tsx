@@ -28,6 +28,7 @@ export default function Stage() {
     })
     sceneRef.current = sc
     globalScene.current = sc
+    ;(window as unknown as { __hqScene: HQScene }).__hqScene = sc
 
     const ro = new ResizeObserver(() => sc.resize())
     ro.observe(el)

@@ -56,6 +56,10 @@ interface RoomView {
 const WHITE = new THREE.Color(0xffffff)
 const RED = new THREE.Color(0xff4d63)
 const SOFT_GREY = new THREE.Color(0x5c6470)
+
+/** 协作弧线：最多同时 12 条，每条 16 个流动光点 */
+const LINK_MAX = 12
+const LINK_DOTS = 20
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 
@@ -89,6 +93,7 @@ export class HQScene {
   private pedMesh!: THREE.InstancedMesh
 
   private glowPoints!: THREE.Points
+  private linkMesh: THREE.Points | null = null
   private glowColors!: Float32Array
   private ring!: THREE.Group
   private ringMat!: THREE.MeshBasicMaterial
@@ -119,6 +124,7 @@ export class HQScene {
   private camTo = { theta: 0.78, phi: 0.86, radius: 35 }
   private target = new THREE.Vector3(0, 0.45, 0)
   private targetTo = new THREE.Vector3(0, 0.3, 0)
+  private camLocked = false
   private dragging = false
   private moved = false
   private lastPointer = { x: 0, y: 0 }
@@ -190,6 +196,7 @@ export class HQScene {
     this.buildDirectorSuite()
     this.buildMeetingRoom()
     this.buildAgents()
+    this.buildLinks()
     this.buildMarker()
     this.buildRing()
     this.buildDust()
@@ -209,6 +216,7 @@ export class HQScene {
     if (v.length < 3 || v.some((n) => !Number.isFinite(n))) return
     this.camTo = { theta: v[0], phi: v[1], radius: v[2] }
     this.cam = { ...this.camTo }
+    this.camLocked = true
     if (v.length >= 6) {
       this.target.set(v[3], v[4], v[5])
       this.targetTo.copy(this.target)
@@ -1520,6 +1528,81 @@ export class HQScene {
     this.lastStatus = world.agents.map((a) => a.status)
   }
 
+  /* 多 agent 协作关系：父 agent → 子 agent 的流动光点（只在实际派出子 agent 时出现） */
+  private buildLinks() {
+    const n = LINK_MAX * LINK_DOTS
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage))
+    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage))
+    geo.setDrawRange(0, 0)
+    const mat = new THREE.PointsMaterial({
+      map: spriteTexture(),
+      size: 0.3,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.95,
+      vertexColors: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+    this.linkMesh = new THREE.Points(geo, mat)
+    this.linkMesh.frustumCulled = false
+    this.linkMesh.visible = false
+    this.scene.add(this.linkMesh)
+  }
+
+  private updateLinks(time: number) {
+    const m = this.linkMesh
+    if (!m) return
+    const geo = m.geometry
+    const pos = (geo.getAttribute('position') as THREE.BufferAttribute).array as Float32Array
+    const col = (geo.getAttribute('color') as THREE.BufferAttribute).array as Float32Array
+    const wall = Date.now()
+    let k = 0
+
+    for (const l of world.links) {
+      if (l.until <= wall) continue
+      const a = this.walkPos[l.from]
+      const b = this.walkPos[l.to]
+      if (!a || !b) continue
+
+      const dx = b.x - a.x
+      const dz = b.z - a.z
+      const dist = Math.hypot(dx, dz) || 0.001
+      // 垂直于连线的外凸中点 + 抛物线弧高：读起来像"数据流"而不是一根直线
+      const cx = (a.x + b.x) / 2 + (-dz / dist) * (0.16 + dist * 0.1)
+      const cz = (a.z + b.z) / 2 + (dx / dist) * (0.16 + dist * 0.1)
+      const h = 0.45 + dist * 0.26
+
+      // 光点沿弧线跑：读起来像"父在给子发指令"，比静态连线清楚得多
+      for (let j = 0; j < LINK_DOTS; j++) {
+        const tt = (j / LINK_DOTS + time * 0.22) % 1
+        const u = 1 - tt
+        const idx = k * LINK_DOTS + j
+        const o3 = idx * 3
+        pos[o3] = u * u * a.x + 2 * u * tt * cx + tt * tt * b.x
+        pos[o3 + 1] = 0.24 + 4 * tt * u * h
+        pos[o3 + 2] = u * u * a.z + 2 * u * tt * cz + tt * tt * b.z
+
+        // 头亮尾暗，形成彗尾
+        const head = j / LINK_DOTS
+        const k2 = 0.35 + 0.65 * head * head
+        col[o3] = 0.7 * k2
+        col[o3 + 1] = 0.94 * k2
+        col[o3 + 2] = 1.0 * k2
+      }
+
+      k++
+      if (k >= LINK_MAX) break
+    }
+
+    geo.setDrawRange(0, k * LINK_DOTS)
+    ;(geo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true
+    ;(geo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true
+    m.visible = k > 0
+    if (k > 0) (m.material as THREE.PointsMaterial).opacity = 0.85 + 0.15 * Math.sin(time * 3.1)
+  }
+
   private buildMarker() {
     const g = new THREE.Group()
     const ring = new THREE.Mesh(
@@ -1695,7 +1778,7 @@ export class HQScene {
       this.camTo.radius = clamp(Math.max(room.rect.w, room.rect.d) * 2.7, 9.5, 13)
       this.roamPhase = 'idle'
       this.roamTimer = 0
-    } else {
+    } else if (!this.camLocked) {
       this.targetTo.set(0, 0.45, 0)
       this.camTo.radius = this.baseRadius * this.fitFactor
     }
@@ -1742,7 +1825,7 @@ export class HQScene {
     const w = this.container.clientWidth || 1
     const h = this.container.clientHeight || 1
     this.computeFit()
-    if (!this.focusDept && this.userCooldown <= 0) {
+    if (!this.focusDept && this.userCooldown <= 0 && !this.camLocked) {
       this.camTo.radius = this.baseRadius * this.fitFactor
     }
     this.camera.aspect = w / h
@@ -1887,14 +1970,17 @@ export class HQScene {
       const y = walking ? 0.375 : running ? 0.3 : 0.27
 
       // 人
+      // live 模式下没被真实 agent 占用的席位不放人：大屏上出现的每个身影都是真的
+      const ghost = world.mode === 'live' && !a.extId
       d.position.set(pos.x, y + bob + 0.08, pos.z)
       d.rotation.set(walking ? 0.06 : 0, 0, 0)
-      d.scale.set(1, 1, 1)
+      d.scale.set(ghost ? 0 : 1, ghost ? 0 : 1, ghost ? 0 : 1)
       d.updateMatrix()
       this.bodyMesh.setMatrixAt(i, d.matrix)
 
       d.position.set(pos.x, y + 0.28 + bob, pos.z)
       d.rotation.set(0, 0, 0)
+      d.scale.set(ghost ? 0 : 1, ghost ? 0 : 1, ghost ? 0 : 1)
       d.updateMatrix()
       this.headMesh.setMatrixAt(i, d.matrix)
 
@@ -1910,7 +1996,9 @@ export class HQScene {
       }
 
       // 光点
-      const heat = walking
+      const heat = ghost
+        ? 0
+        : walking
         ? 0.5
         : running
           ? 0.55 + 0.45 * Math.sin(t * 2.4 + i * 1.7)
@@ -2108,6 +2196,7 @@ export class HQScene {
     this.roam(dt)
     this.applyCamera()
     this.updateAgents(t, dt)
+    this.updateLinks(t)
     this.updateRooms(t)
     this.updateRing()
 

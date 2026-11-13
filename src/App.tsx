@@ -7,6 +7,7 @@ import Ticker from './components/Ticker'
 import Drawer from './components/Drawer'
 import { useHQ } from './store/useHQ'
 import { world } from './data/world'
+import { connectLive, liveUrl } from './data/live'
 
 export default function App() {
   const booted = useHQ((s) => s.booted)
@@ -22,12 +23,19 @@ export default function App() {
     if (q.has('meet')) world.forceMeeting()
     if (q.has('err')) world.forceError()
 
+    // 真实接入：?live=1 或 ?live=http://host:port
+    const url = liveUrl()
+    const live = url ? connectLive(url) : null
+
     if (q.has('noboot')) {
       setBooted(true)
-      return
+      return () => live?.close()
     }
     const t = setTimeout(() => setBooted(true), 1150)
-    return () => clearTimeout(t)
+    return () => {
+      clearTimeout(t)
+      live?.close()
+    }
   }, [setBooted])
 
   const noanim = typeof location !== 'undefined' && new URLSearchParams(location.search).has('noanim')
