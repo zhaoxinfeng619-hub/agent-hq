@@ -1,0 +1,16 @@
+{
+  "name": "ai-digest",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AI 日报 / 周报：真实多进程 agent 流水线，事件流实时驱动 Agent HQ 大屏",
+  "scripts": {
+    "live": "node live.mjs",
+    "live:slow": "node live.mjs --slow",
+    "digest": "node run.mjs --days 14 --deep",
+    "bridge": "node ../../server/bridge.mjs --relay"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

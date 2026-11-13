@@ -422,7 +422,8 @@ class World {
         a.heat = Math.min(1, a.heat + 0.12)
       } else {
         a.heat = Math.max(0, a.heat - 0.05)
-        const due = this.timers.get(a.id)
+        // live 模式下所有开工都必须来自真实事件，绝不自己到期开工
+        const due = this.mode === 'mock' ? this.timers.get(a.id) : undefined
         if (due !== undefined && this.clock >= due) {
           this.timers.delete(a.id)
           this.startTask(a)
@@ -502,15 +503,27 @@ class World {
    */
   private bind(extId: string, deptId?: string): Agent {
     const hit = this.extToAgent.get(extId)
-    if (hit) return hit
+    if (hit) {
+      // 已绑定，但事件声明的部门变了（或上次落错了）：释放旧座位重新分配，
+      // 否则大屏上会一直显示错部门的旧位置。总监座位不参与搬迁。
+      if (hit.role === 'director' || !deptId || hit.deptId === deptId) return hit
+      hit.extId = null
+      if (hit.baseName !== undefined) hit.name = hit.baseName
+      this.extToAgent.delete(extId)
+    }
 
     // 编排者 / 总监：直接坐总监办公室那把大班台
     if (deptId === 'director') {
       const dir = this.agents.find((a) => a.role === 'director')
       if (dir) {
         if (dir.extId) this.extToAgent.delete(dir.extId)
+        if (dir.baseName === undefined) dir.baseName = dir.name
         dir.extId = extId
         this.extToAgent.set(extId, dir)
+        this.lastSeen.set(extId, now())
+        // 用外部 id 末段命名，大屏上要能认出"这是谁在调度"
+        const shortDir = extId.replace(/^.*[/:]/, '').slice(0, 14)
+        if (shortDir) dir.name = shortDir
         return dir
       }
     }
@@ -590,17 +603,26 @@ class World {
 
     switch (ev.type) {
       case 'reset': {
-        this.mode = 'mock'
-        this.link = 'off'
+        // 注意：不重置 mode/link。live 连接下的 reset 是"清场重来"，
+        // 若把 mode 打回 mock，下一个事件会重新 goLive() 把 link 覆盖成 connecting，
+        // 而 SSE 的 onopen 只触发一次 —— 顶栏就会永远卡在 connecting。
         this.links.length = 0
         this.meeting = null
         this.extToAgent.clear()
+        this.lastSeen.clear()
+        this.parentOf.clear()
         for (const a of this.agents) {
           a.extId = null
           a.seatIndex = null
-          if (a.status === 'meeting') a.status = 'standby'
-          this.timers.set(a.id, this.clock + rand(1, 6))
+          a.status = 'standby'
+          a.taskId = null
+          a.startedAt = null
+          a.heat = 0
+          if (a.baseName !== undefined) a.name = a.baseName
+          // 只有 mock 演出才装定时器；live 下装了就等于伪造开工
+          if (this.mode !== 'live') this.timers.set(a.id, this.clock + rand(1, 6))
         }
+        for (const k of this.timers.keys()) if (this.mode === 'live') this.timers.delete(k)
         this.touch()
         this.subs.forEach((fn) => fn())
         return

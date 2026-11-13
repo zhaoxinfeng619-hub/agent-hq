@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --port 5274",
     "bridge": "node server/bridge.mjs --demo",
-    "bridge:file": "node server/bridge.mjs --file"
+    "bridge:relay": "node server/bridge.mjs --relay",
+    "bridge:file": "node server/bridge.mjs --file",
+    "example:digest": "cd examples/ai-digest && node live.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

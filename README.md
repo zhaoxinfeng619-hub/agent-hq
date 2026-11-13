@@ -71,9 +71,27 @@ npm run build      # 产物 dist/index.html，约 757KB，three.js 已内联
 
 ### 一分钟跑起来
 
+**看到真实的 agent 在干活**（推荐先看这个）：
+
 ```bash
-npm run bridge        # 内置多 agent 编排演示：1 个 orchestrator 派 4 个子 agent，中途开一次会、翻一次车
+cd examples/ai-digest
+npm run live        # 起 bridge(relay) + AI 日报/周报流水线，每 14 秒一轮
 # 另开一个窗口，打开 Agent-HQ-智能总部.html?live=1
+```
+
+这条命令跑的是 4 个**真实子进程**：真的执行 `git log`、真的遍历几万个文件、真的读写文件，每一步都通过 HTTP 打给大屏。阶段依赖和并行都是真的（collector 必须先写出 `metrics.json`，writer 和 analyst 才是真并行）。主图里的 `preview_live.png` 就是它跑起来的样子。
+
+`relay` 模式下 bridge **不造任何事件**，可以自己验证：
+
+```bash
+curl -s localhost:8787/health     # {"mode":"relay","seq":0}  ← 0 = 一条都没自己产生
+curl -s "localhost:8787/events.json?since=0"   # [] = 没有预录时间线
+```
+
+**看内置演示**（不需要任何真实任务）：
+
+```bash
+npm run bridge        # 1 个 orchestrator 派 4 个子 agent，中途开一次会、翻一次车
 ```
 
 或者接你自己的日志（每行一个 JSON）：
@@ -99,7 +117,7 @@ curl -X POST http://127.0.0.1:8787/emit -d '{"type":"agent.start","agent":"my-ag
 | `subagent.spawn` | `agent`, `parent` | 建立父子关系 → 场景里出现一条流动光点弧线 |
 | `meeting.start` | `agents[]`, `topic`, `ms` | 这些人离座走进会议室开会，`ms` 后自动散会 |
 | `meeting.end` | — | 提前散会 |
-| `reset` | — | 回到 MOCK 演出 |
+| `reset` | — | 清场重来（保持当前模式，live 连接不会被打回 MOCK） |
 
 传输层：`GET /events`（SSE，推荐）+ 断线重连由 EventSource 负责；连接时 bridge 会补发最近 90 条事件，所以**中途打开大屏也能还原出当前谁在干活、谁派了谁**。`GET /events.json?since=<n>` 是轮询版。
 
@@ -113,7 +131,7 @@ curl -X POST http://127.0.0.1:8787/emit -d '{"type":"agent.start","agent":"my-ag
 
 多 agent 编排框架（LangGraph / CrewAI / 自研 orchestrator）同理：手里有"谁派了谁、谁在调什么工具"，就有东西可画。
 
-> 说明一下这个项目本身：它是我单线程顺序做出来的，没有用多 agent 并行（每步都依赖上一步的构建结果，并行收益为负）。所以大屏里跑的始终是 mock 或 bridge 的演示流，不是我的执行过程。想让它显示真实的多 agent 执行，接上 bridge 就是。
+> 关于这个项目本身：大屏最初那版是我单线程顺序做出来的，跑的是 mock 演出。后来补了 `examples/ai-digest`——一个真的会跑的 AI 日报/周报流水线，用来证明接入层不是摆样子：4 个真进程、真的 git、真的文件读写、真的事件时间戳。想接自己的运行时，照它的 `run.mjs` 抄结构即可。
 
 ## 结构
 

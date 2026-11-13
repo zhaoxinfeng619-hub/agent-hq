@@ -2,6 +2,7 @@
 /**
  * Agent HQ · bridge —— 把真实 agent 运行时的事件流推给大屏
  *
+ *   node server/bridge.mjs --relay           # 纯接收模式：不造任何事件，只等真实运行时打点
  *   node server/bridge.mjs --demo            # 内置多 agent 编排演示（默认）
  *   node server/bridge.mjs --file run.jsonl  # 跟读任意 JSONL 事件日志（tail -f 语义）
  *   node server/bridge.mjs --port 8787       # 改端口
@@ -27,7 +28,9 @@ const argOf = (k, d) => {
 }
 const PORT = Number(argOf('port', 8787))
 const FILE = argOf('file', null)
-const DEMO = argv.includes('--demo') || !FILE
+/** --relay：只转发外部 POST /emit 进来的事件，一条都不自己造 */
+const RELAY = argv.includes('--relay')
+const DEMO = !RELAY && (argv.includes('--demo') || !FILE)
 
 /* ------------------------------------------------------------------ 事件总线 */
 
@@ -189,7 +192,7 @@ const server = http.createServer((req, res) => {
 
   if (url.pathname === '/health') {
     res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' })
-    return res.end(JSON.stringify({ ok: true, mode: DEMO ? 'demo' : 'file', clients: clients.size, seq }))
+    return res.end(JSON.stringify({ ok: true, mode: RELAY ? 'relay' : DEMO ? 'demo' : 'file', clients: clients.size, seq }))
   }
 
   if (url.pathname === '/events.json') {
@@ -255,7 +258,10 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`\n  Agent HQ bridge → http://127.0.0.1:${PORT}`)
   console.log(`  SSE   : http://127.0.0.1:${PORT}/events`)
-  console.log(`  大屏  : 打开 Agent-HQ-智能总部.html?live=1\n`)
+  console.log(`  大屏  : 打开 Agent-HQ-智能总部.html?live=1`)
+  if (RELAY) console.log(`  模式  : relay（只转发 POST /emit，不造事件）\n`)
+  else console.log('')
+  if (RELAY) return
   if (FILE) follow(FILE)
   else startDemo()
 })

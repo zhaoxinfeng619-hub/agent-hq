@@ -6,3 +6,4 @@ _tsbuildinfo
 _*.png
 _DS_Store
 .DS_Store
+examples/ai-digest/out/
