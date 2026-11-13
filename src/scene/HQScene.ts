@@ -1600,7 +1600,12 @@ export class HQScene {
     ;(geo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true
     ;(geo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true
     m.visible = k > 0
-    if (k > 0) (m.material as THREE.PointsMaterial).opacity = 0.85 + 0.15 * Math.sin(time * 3.1)
+    if (k > 0) {
+      const mat = m.material as THREE.PointsMaterial
+      mat.opacity = 0.85 + 0.15 * Math.sin(time * 3.1)
+      // 远景时把点放大，否则远看只剩几像素，等于没画
+      mat.size = 0.22 + this.cam.radius * 0.013
+    }
   }
 
   private buildMarker() {

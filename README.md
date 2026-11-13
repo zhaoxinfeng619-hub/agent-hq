@@ -67,6 +67,8 @@ npm run build      # 产物 dist/index.html，约 757KB，three.js 已内联
 - **父 → 子 协作关系画成流动光点**（`subagent.spawn` 事件触发），从父 agent 的桌子拱到子 agent 的桌子；人走去开会时光点会跟着拐进会议室；
 - 进度、工具、异常、会议里的一切都由事件驱动，`world.ts` 不再自己掷骰子。
 
+![live](preview_live.png)
+
 ### 一分钟跑起来
 
 ```bash
